@@ -34,10 +34,10 @@ x_next = A@xvec + B@delta
 model.set_rhs('theta', x_next[0])
 model.set_rhs('x2', x_next[1])
 
-P, L, K = ct.dare(A, B, np.eye(2), R=[1])
-Q = 10000 * np.array([[1, 0], [0, 0.0001]])
+Q = np.array([[1, 0], [0, 0.0001]])
+P, L, K = ct.dare(A, B, Q, R=[1])
 
-model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(10 * P, xvec)).squeeze())
+model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(0.1*P, xvec)).squeeze())
 model.set_expression(expr_name='stage cost', expr=0.5 * (np.matmul(xvec.T, np.matmul(Q, xvec))).squeeze())
 
 model.setup()
@@ -80,7 +80,8 @@ lhs = []
 for k in range(500):
     u0 = mpc.make_step(x0)
     y_next = simulator.make_step(u0)
-    rhs.append(0.5 * np.matmul(x0.T, np.matmul(10 * P, x0)).squeeze() - (0.5 * (np.matmul(x0.T, np.matmul(Q, x0))).squeeze() + abs(u0.squeeze())))
+    rhs.append(0.5 * np.matmul(x0.T, np.matmul(P, x0)).squeeze() -
+              (0.5 * np.matmul(x0.T, np.matmul(Q, x0)).squeeze() + abs(u0.squeeze())))
     x0 = estimator.make_step(y_next)
     lhs.append(0.5 * np.matmul(x0.T, np.matmul(10 * P, x0)).squeeze())
 
@@ -94,5 +95,5 @@ plt.show()
 
 plt.plot(rhs)
 plt.plot(lhs)
-plt.legend(['rhs', 'lhs'])
+plt.legend(['$V_f(x) - l(x, u)$', '$V_f(f(x, u))$'])
 plt.show()
