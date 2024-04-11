@@ -1,10 +1,9 @@
 import numpy as np
 import do_mpc
-import scipy
+import control as ct
 
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
-
 
 I = 3.28
 m = 87
@@ -22,41 +21,40 @@ B = np.array([[(-m*h*a*v_r)/(b*(I + m*h**2))],
 C = np.array([1, 0])
 D = np.array([0])
 
-model_type = 'discrete'
+model_type = 'continuous'
 model = do_mpc.model.Model(model_type)
 
-x = model.set_variable(var_type='_x', var_name='x', shape=(2, 1))
+theta = model.set_variable(var_type='_x', var_name='theta')
+x2 = model.set_variable(var_type='_x', var_name='x2')
 delta = model.set_variable('_u', 'delta', shape=1)
+xvec = np.array([[theta], [x2]])
 
-x_next = A@x + B@delta
+x_next = A@xvec + B@delta
 
-model.set_rhs('x', x_next)
+model.set_rhs('theta', x_next[0])
+model.set_rhs('x2', x_next[1])
 
-P = scipy.linalg.solve_discrete_are(A, B, np.identity(2), np.array([1]))
-xvec = np.array([[x[0]], [x[0]]])
-Q = np.identity(2)
-R = np.identity(1)
-model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(P, xvec)).squeeze())
-model.set_expression(expr_name='stage cost', expr=0.5 * (np.matmul(xvec.T, np.matmul(Q, xvec)) + delta**2))
+P, L, K = ct.dare(A, B, np.eye(2), R=[1])
+Q = 10000 * np.array([[1, 0], [0, 0.0001]])
+
+model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(10 * P, xvec)).squeeze())
+model.set_expression(expr_name='stage cost', expr=0.5 * (np.matmul(xvec.T, np.matmul(Q, xvec))).squeeze())
 
 model.setup()
-
 mpc = do_mpc.controller.MPC(model)
-setup_mpc = dict(n_horizon=5, t_step=dt, state_discretization='discrete', store_full_solution=True)
+setup_mpc = dict(n_horizon=10, t_step=dt, state_discretization='collocation', store_full_solution=True)
 
 mpc.set_param(**setup_mpc)
 lterm = model.aux['stage cost']
 mterm = model.aux['terminal cost']
 
 mpc.set_objective(mterm=mterm, lterm=lterm)
-mpc.set_rterm(delta=10)  # input penalty
+mpc.set_rterm(delta=1)  # input penalty
 
-
-mpc.terminal_bounds['lower', 'x'] = np.array([[np.deg2rad(-35)], [np.deg2rad(-35)]])
-mpc.terminal_bounds['upper', 'x'] = np.array([[np.deg2rad(35)], [np.deg2rad(35)]])
+mpc.terminal_bounds['lower', 'theta'] = np.deg2rad(-35)
+mpc.terminal_bounds['upper', 'theta'] = np.deg2rad(35)
 mpc.bounds['lower', '_u', 'delta'] = np.deg2rad(-20)
 mpc.bounds['upper', '_u', 'delta'] = np.deg2rad(20)
-
 
 mpc.setup()
 estimator = do_mpc.estimator.StateFeedback(model)
@@ -68,26 +66,33 @@ simulator.setup()
 np.random.seed(99)
 
 # Initial state
-e = np.ones([model.n_x, 1])
-x0 = np.random.uniform(np.deg2rad(-11)*e, np.deg2rad(11)*e)  # Values between +3 and +3 for all states
+x0 = np.array([[np.deg2rad(5)], [0]])
 mpc.x0 = x0
 simulator.x0 = x0
 estimator.x0 = x0
-print(x0)
+
 # Use initial state to set the initial guess.
 mpc.set_initial_guess()
 
-# %%capture
-for k in range(100):
+rhs = []
+lhs = []
+
+for k in range(500):
     u0 = mpc.make_step(x0)
     y_next = simulator.make_step(u0)
+    rhs.append(0.5 * np.matmul(x0.T, np.matmul(10 * P, x0)).squeeze() - (0.5 * (np.matmul(x0.T, np.matmul(Q, x0))).squeeze() + abs(u0.squeeze())))
     x0 = estimator.make_step(y_next)
+    lhs.append(0.5 * np.matmul(x0.T, np.matmul(10 * P, x0)).squeeze())
 
 rcParams['axes.grid'] = True
 rcParams['font.size'] = 18
-
-fig, ax, graphics = do_mpc.graphics.default_plot(mpc.data, figsize=(16, 9))
+fig, ax, graphics = do_mpc.graphics.default_plot(mpc.data, figsize=(20, 9))
 graphics.plot_results()
-graphics.reset_axes()
+fig.suptitle(f'MPC controller', y=1)
+# graphics.reset_axes()
 plt.show()
 
+plt.plot(rhs)
+plt.plot(lhs)
+plt.legend(['rhs', 'lhs'])
+plt.show()
