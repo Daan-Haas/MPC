@@ -4,7 +4,6 @@ import control as ct
 
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
-from Xf import true_points
 
 I = 3.28
 m = 87
@@ -36,27 +35,31 @@ model.set_rhs('theta', x_next[0])
 model.set_rhs('x2', x_next[1])
 
 
-P, L, K = ct.dare(A, B, np.identity(2), R=[1])
+P, L, K = ct.dare(A, B, np.eye(2), R=[1])
+Q = 10000 * np.array([[1, 0], [0, 0.0001]])
 
-Q = 100 * np.identity(2)
-
-model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(P, xvec)).squeeze())
+model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(10 * P, xvec)).squeeze())
 model.set_expression(expr_name='stage cost', expr=0.5 * (np.matmul(xvec.T, np.matmul(Q, xvec))).squeeze())
 
 model.setup()
 
+us = []
+x1s = []
+x2s = []
 
-for i in [10]:
+R_to_try = [0, 1, 10, 1000]
+
+for i in R_to_try:
 
     mpc = do_mpc.controller.MPC(model)
-    setup_mpc = dict(n_horizon=i, t_step=dt, state_discretization='collocation', store_full_solution=True)
+    setup_mpc = dict(n_horizon=10, t_step=dt, state_discretization='collocation', store_full_solution=True)
 
     mpc.set_param(**setup_mpc)
     lterm = model.aux['stage cost']
     mterm = model.aux['terminal cost']
 
     mpc.set_objective(mterm=mterm, lterm=lterm)
-    mpc.set_rterm(delta=1)  # input penalty
+    mpc.set_rterm(delta=i)  # input penalty
 
     mpc.terminal_bounds['lower', 'theta'] = np.deg2rad(-35)
     mpc.terminal_bounds['upper', 'theta'] = np.deg2rad(35)
@@ -73,7 +76,7 @@ for i in [10]:
     np.random.seed(99)
 
     # Initial state
-    x0 = np.array([[np.deg2rad(30)], [0]])
+    x0 = np.array([[np.deg2rad(5)], [0]])
     mpc.x0 = x0
     simulator.x0 = x0
     estimator.x0 = x0
@@ -81,33 +84,69 @@ for i in [10]:
     # Use initial state to set the initial guess.
     mpc.set_initial_guess()
 
-    for k in range(2000):
+    u = []
+    x1 = [x0[0]]
+    x2array = [x0[1]]
+    for k in range(500):
         u0 = mpc.make_step(x0)
         y_next = simulator.make_step(u0)
         x0 = estimator.make_step(y_next)
+        u.append(u0.squeeze())
+        x1.append(x0[0])
+        x2array.append(x0[1])
+
+    us.append(u)
+    x1s.append(x1)
+    x2s.append(x2array)
 
     rcParams['axes.grid'] = True
     rcParams['font.size'] = 18
-
     fig, ax, graphics = do_mpc.graphics.default_plot(mpc.data, figsize=(20, 9))
     graphics.plot_results()
-    fig.suptitle(f'?', y=1)
+    fig.suptitle(fr'stage cost R equal to {i}', y=1)
     # graphics.reset_axes()
 plt.show()
 
-xs = []
-for point in true_points:
-    x0 = point
-    mpc.x0 = x0
-    simulator.x0 = x0
-    estimator.x0 = x0
-    mpc.set_initial_guess()
-    u0 = mpc.make_step(x0)
-    y_next = simulator.make_step(u0)
-    x0 = estimator.make_step(y_next)
-    xs.append(x0)
+# feedback controller
+uFB = [0]
+x1FB = [np.deg2rad(5)]
+x2FB = [0]
 
-Xn = [np.matmul(-K, state) < 0.5 for state in xs]
-print(sum(Xn))
-print(len(xs))
-print([xs[i] for i in range(len(xs)) if not Xn[i]])
+Kpp = ct.acker(A, B, (-3.01 + 3.01j, -3.01 - 3.01j))
+x_next = np.array([[np.deg2rad(5)], [0]])
+for i in range(500):
+    u = np.matmul(Kpp, x_next)
+    dx = np.matmul(A - np.matmul(Kpp, B), x_next)
+    x_next += dx * dt
+    x1FB.append(x_next[0][0])
+    x2FB.append(x_next[1][0])
+    uFB.append(u.squeeze())
+
+
+# Plotting response for different horizons and FB
+us.append(uFB)
+for u in us:
+    plt.plot(np.linspace(0, len(u)*dt, len(u)), np.rad2deg(u))
+plt.title('Steering inputs for various stage cost component R')
+plt.xlabel('time [s]')
+plt.ylabel('steer angle [deg]')
+plt.legend(['0', '1', '10', '1000', 'Feedback'], title='R')
+plt.show()
+
+x1s.append(x1FB)
+for x in x1s:
+    plt.plot(np.linspace(0, len(x)*dt, len(x)), np.rad2deg(x))
+plt.title('roll angle for various stage cost component R')
+plt.xlabel('time [s]')
+plt.ylabel('roll angle [deg]')
+plt.legend(['0', '1', '10', '1000', 'Feedback'], title='R')
+plt.show()
+
+x2s.append(x2FB)
+for x in x2s:
+    plt.plot(np.linspace(0, len(x)*dt, len(x)), np.rad2deg(x))
+plt.title('steer rate for various stage cost component R')
+plt.xlabel('time [s]')
+plt.ylabel('steer rate [deg/s]')
+plt.legend(['0', '1', '10', '1000', 'Feedback'], title='R')
+plt.show()
