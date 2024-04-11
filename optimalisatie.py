@@ -35,10 +35,10 @@ model.set_rhs('theta', x_next[0])
 model.set_rhs('x2', x_next[1])
 
 
-P, L, K = ct.dare(A, B, np.eye(2), R=[1])
-Q = 10000 * np.array([[1, 0], [0, 0.0001]])
+Q = np.array([[1, 0], [0, 0.001]])
+P, L, K = ct.dare(A, B, Q, R=[1])
 
-model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(10 * P, xvec)).squeeze())
+model.set_expression(expr_name='terminal cost', expr=0.5 * np.matmul(xvec.T, np.matmul(0.05*P, xvec)).squeeze())
 model.set_expression(expr_name='stage cost', expr=0.5 * (np.matmul(xvec.T, np.matmul(Q, xvec))).squeeze())
 
 model.setup()
@@ -48,18 +48,20 @@ x1s = []
 x2s = []
 
 R_to_try = [0, 1, 10, 1000]
+Q_to_try = [1, 10, 100, 1000, 10000]
+h_to_try = [1, 10, 20, 50]
 
 for i in R_to_try:
 
     mpc = do_mpc.controller.MPC(model)
-    setup_mpc = dict(n_horizon=10, t_step=dt, state_discretization='collocation', store_full_solution=True)
+    setup_mpc = dict(n_horizon=50, t_step=dt, state_discretization='collocation', store_full_solution=True)
 
     mpc.set_param(**setup_mpc)
     lterm = model.aux['stage cost']
     mterm = model.aux['terminal cost']
 
     mpc.set_objective(mterm=mterm, lterm=lterm)
-    mpc.set_rterm(delta=i)  # input penalty
+    mpc.set_rterm(delta=1)  # input penalty
 
     mpc.terminal_bounds['lower', 'theta'] = np.deg2rad(-35)
     mpc.terminal_bounds['upper', 'theta'] = np.deg2rad(35)
